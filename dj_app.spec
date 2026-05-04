@@ -69,7 +69,7 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='LuchaPinchadiscos.app',
-    icon=None,
+    icon='LuchaPinchadiscos.icns',
     bundle_identifier='com.luchapinchadiscos.lp',
     info_plist={
         'NSHighResolutionCapable': True,
