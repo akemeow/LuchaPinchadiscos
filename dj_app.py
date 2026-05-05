@@ -219,6 +219,10 @@ class DJApp(TkinterDnD.Tk):
         self._filename = ""
         self._zoom        = 1.0
         self._zoom_center = 0.5
+        # スロットドラッグ状態
+        self._drag_slot_src   = None   # ドラッグ元スロット番号
+        self._drag_slot_over  = None   # ホバー中スロット番号
+        self._drag_slot_moved = False  # 移動したかどうか（クリックと区別）
         self._build_menu()
         self._build_ui()
         self._update_loop()
@@ -472,7 +476,9 @@ class DJApp(TkinterDnD.Tk):
                            bg="#0d0d1a", fg="#666666", anchor="w",
                            width=42, relief="flat", cursor="hand2")
             lbl.pack(side="left", padx=2)
-            lbl.bind("<Button-1>", lambda e, n=i: self._select_slot(n))
+            lbl.bind("<ButtonPress-1>",   lambda e, n=i: self._slot_drag_start(e, n))
+            lbl.bind("<B1-Motion>",       lambda e: self._slot_drag_motion(e))
+            lbl.bind("<ButtonRelease-1>", lambda e: self._slot_drag_end(e))
             lbl.drop_target_register(DND_FILES)
             lbl.dnd_bind("<<Drop>>",      lambda e, n=i: self._on_slot_drop(e, n))
             lbl.dnd_bind("<<DragEnter>>", lambda e, n=i: self._on_slot_drag_enter(e, n))
@@ -584,14 +590,85 @@ class DJApp(TkinterDnD.Tk):
     # ── スロット操作 ──────────────────────────────────────────────
     def _refresh_slot_ui(self):
         for i in range(NUM_SLOTS):
-            slot = track_slots[i]
+            slot     = track_slots[i]
             is_active = (i == active_slot)
+            is_src    = (i == self._drag_slot_src)
+            is_over   = (i == self._drag_slot_over) and not is_src
             name  = slot['name'][:38] if slot else "— empty —"
             fg    = "#e0e0e0" if slot else "#666666"
-            bg_lbl = "#1a2a1a" if is_active else "#0d0d1a"
-            btn_fg = "#e94560" if is_active else "#888888"
+            if is_over:                        # ドロップ先（紫ハイライト）
+                bg_lbl = "#2a1040"
+                btn_fg = "#dd88ff"
+            elif is_src and self._drag_slot_moved:  # ドラッグ中（黄ハイライト）
+                bg_lbl = "#2a2a00"
+                btn_fg = "#ffff44"
+            elif is_active:
+                bg_lbl = "#1a2a1a"
+                btn_fg = "#e94560"
+            else:
+                bg_lbl = "#0d0d1a"
+                btn_fg = "#888888"
             self.slot_labels[i].config(text=name, fg=fg, bg=bg_lbl)
             self.slot_btns[i].config(fg=btn_fg)
+
+    # ── スロット間ドラッグ＆ドロップ（入れ替え） ─────────────────────
+    def _slot_drag_start(self, event, n):
+        self._drag_slot_src    = n
+        self._drag_slot_sx     = event.x_root
+        self._drag_slot_sy     = event.y_root
+        self._drag_slot_over   = None
+        self._drag_slot_moved  = False
+
+    def _slot_drag_motion(self, event):
+        if self._drag_slot_src is None:
+            return
+        dx = abs(event.x_root - self._drag_slot_sx)
+        dy = abs(event.y_root - self._drag_slot_sy)
+        if dx < 5 and dy < 5 and not self._drag_slot_moved:
+            return
+        self._drag_slot_moved = True
+
+        # カーソル下のスロットラベルを特定
+        widget  = self.winfo_containing(event.x_root, event.y_root)
+        new_over = None
+        for i, lbl in enumerate(self.slot_labels):
+            if widget is lbl:
+                new_over = i
+                break
+        if new_over != self._drag_slot_over:
+            self._drag_slot_over = new_over
+            self._refresh_slot_ui()
+
+    def _slot_drag_end(self, event):
+        src = self._drag_slot_src
+        tgt = self._drag_slot_over
+        moved = self._drag_slot_moved
+        # リセット（先にクリア）
+        self._drag_slot_src   = None
+        self._drag_slot_over  = None
+        self._drag_slot_moved = False
+
+        if not moved:
+            # ドラッグなし → 通常クリック（選択）
+            if src is not None:
+                self._select_slot(src)
+        elif tgt is not None and tgt != src:
+            # ドラッグ有り → スロット入れ替え
+            self._swap_slots(src, tgt)
+        else:
+            self._refresh_slot_ui()
+
+    def _swap_slots(self, a, b):
+        """スロット a と b の内容を入れ替える"""
+        global active_slot
+        self._push_undo()
+        track_slots[a], track_slots[b] = track_slots[b], track_slots[a]
+        # アクティブスロットが移動先に追従
+        if active_slot == a:
+            active_slot = b
+        elif active_slot == b:
+            active_slot = a
+        self._select_slot(active_slot)
 
     def _select_slot(self, n):
         global active_slot, audio_data, pos, playing, looping, loop_end_
